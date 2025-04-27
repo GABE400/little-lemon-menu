@@ -1,28 +1,97 @@
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import {
   StyleSheet,
-  Image,
-  TextInput,
-  SectionList,
-  TouchableOpacity,
-  View,
   Text,
+  View,
   SafeAreaView,
+  SectionList,
+  TextInput,
+  TouchableOpacity,
   StatusBar,
   ActivityIndicator,
-  Alert,
 } from "react-native";
 
-import { ThemedText } from "@/components/ThemedText";
-import { ThemedView } from "@/components/ThemedView";
-import { getSectionListData, SectionListData } from "@/utils";
-import { createTable, saveMenuItems, getMenuItems, MenuItem } from "@/database";
-import { fetchData, customMenuItems } from "@/api";
+// Define interfaces
+interface MenuItem {
+  id: string;
+  title: string;
+  price: string;
+  category: string;
+}
 
-function MenuScreen() {
+interface SectionData {
+  title: string;
+  data: MenuItem[];
+}
+
+// Sample menu data
+const MENU_ITEMS: MenuItem[] = [
+  // Appetizers
+  {
+    id: "1",
+    title: "Spinach Artichoke Dip",
+    price: "10.99",
+    category: "Appetizers",
+  },
+  { id: "2", title: "Hummus", price: "8.99", category: "Appetizers" },
+  {
+    id: "3",
+    title: "Fried Calamari Rings",
+    price: "12.99",
+    category: "Appetizers",
+  },
+  { id: "4", title: "Fried Mushroom", price: "9.99", category: "Appetizers" },
+
+  // Salads
+  { id: "5", title: "Greek Salad", price: "9.99", category: "Salads" },
+  { id: "6", title: "Caesar Salad", price: "8.99", category: "Salads" },
+  { id: "7", title: "Tuna Salad", price: "11.99", category: "Salads" },
+  {
+    id: "8",
+    title: "Grilled Chicken Salad",
+    price: "12.99",
+    category: "Salads",
+  },
+
+  // Beverages (unchanged)
+  { id: "9", title: "Water", price: "1.99", category: "Beverages" },
+  { id: "10", title: "Coke", price: "2.99", category: "Beverages" },
+  { id: "11", title: "Beer", price: "5.99", category: "Beverages" },
+  { id: "12", title: "Ice Tea", price: "3.99", category: "Beverages" },
+];
+
+// Function to transform data for SectionList
+function getSectionListData(data: MenuItem[]): SectionData[] {
+  // Group the menu items by category
+  const groupedData = data.reduce<Record<string, MenuItem[]>>((acc, item) => {
+    // If this category doesn't exist in our accumulator yet, create it
+    if (!acc[item.category]) {
+      acc[item.category] = [];
+    }
+
+    // Add the current item to its category array
+    acc[item.category].push(item);
+
+    return acc;
+  }, {});
+
+  // Convert the grouped data object into an array of section objects
+  const sectionListData = Object.entries(groupedData).map(
+    ([category, items]) => {
+      return {
+        title: category,
+        data: items,
+      };
+    }
+  );
+
+  return sectionListData;
+}
+
+export default function App() {
   const [searchText, setSearchText] = useState("");
-  const [data, setData] = useState<SectionListData[]>([]);
-  const [filteredData, setFilteredData] = useState<SectionListData[]>([]);
+  const [data, setData] = useState<SectionData[]>([]);
+  const [filteredData, setFilteredData] = useState<SectionData[]>([]);
   const [selectedCategories, setSelectedCategories] = useState<
     Record<string, boolean>
   >({});
@@ -35,9 +104,33 @@ function MenuScreen() {
       try {
         setIsLoading(true);
 
-        // Use custom menu data instead of database operations
-        // since we're having issues with SQLite
-        const items = customMenuItems;
+        // Import database functions
+        const {
+          createTable,
+          saveMenuItems,
+          getMenuItems,
+        } = require("./database");
+
+        // Import API functions
+        const { fetchData } = require("./api");
+
+        // Create the database table (will be skipped if SQLite is not available)
+        await createTable();
+
+        // Try to fetch data from the API
+        let menuItems = [];
+        try {
+          menuItems = await fetchData();
+
+          // Try to save to SQLite (will be skipped if SQLite is not available)
+          await saveMenuItems(menuItems);
+        } catch (apiError) {
+          console.error("Error fetching from API:", apiError);
+          // If API fetch fails, we'll rely on getMenuItems to provide fallback data
+        }
+
+        // Get menu items (from SQLite if available, otherwise from local data)
+        const items = await getMenuItems();
 
         // Extract unique categories
         const uniqueCategories = [
@@ -58,11 +151,22 @@ function MenuScreen() {
         setFilteredData(sectionListData);
       } catch (error) {
         console.error("Error initializing app:", error);
-        Alert.alert(
-          "Error",
-          "Failed to load menu data. Please try again later.",
-          [{ text: "OK" }]
-        );
+
+        // Fallback to local data if everything else fails
+        const uniqueCategories = [
+          ...new Set(MENU_ITEMS.map((item) => item.category)),
+        ];
+        setCategories(uniqueCategories);
+
+        const initialCategories: Record<string, boolean> = {};
+        uniqueCategories.forEach((category) => {
+          initialCategories[category] = true;
+        });
+        setSelectedCategories(initialCategories);
+
+        const sectionListData = getSectionListData(MENU_ITEMS);
+        setData(sectionListData);
+        setFilteredData(sectionListData);
       } finally {
         setIsLoading(false);
       }
@@ -75,19 +179,41 @@ function MenuScreen() {
   useEffect(() => {
     if (!data.length) return;
 
-    const filterData = () => {
-      // Filter items based on search text and selected categories
-      const filteredItems = customMenuItems.filter((item) => {
-        const matchesSearch = item.title
-          .toLowerCase()
-          .includes(searchText.toLowerCase());
-        const categoryIsSelected = selectedCategories[item.category];
-        return matchesSearch && categoryIsSelected;
-      });
+    const filterData = async () => {
+      try {
+        // Import database functions
+        const { getMenuItems } = require("./database");
 
-      // Transform filtered items into section list format
-      const filteredSections = getSectionListData(filteredItems);
-      setFilteredData(filteredSections);
+        // Get all menu items (from SQLite if available, otherwise from local data)
+        const allItems = await getMenuItems();
+
+        // Filter items based on search text and selected categories
+        const filteredItems = allItems.filter((item) => {
+          const matchesSearch = item.title
+            .toLowerCase()
+            .includes(searchText.toLowerCase());
+          const categoryIsSelected = selectedCategories[item.category];
+          return matchesSearch && categoryIsSelected;
+        });
+
+        // Transform filtered items into section list format
+        const filteredSections = getSectionListData(filteredItems);
+        setFilteredData(filteredSections);
+      } catch (error) {
+        console.error("Error filtering data:", error);
+
+        // Fallback to filtering local data if everything else fails
+        const filteredItems = MENU_ITEMS.filter((item) => {
+          const matchesSearch = item.title
+            .toLowerCase()
+            .includes(searchText.toLowerCase());
+          const categoryIsSelected = selectedCategories[item.category];
+          return matchesSearch && categoryIsSelected;
+        });
+
+        const filteredSections = getSectionListData(filteredItems);
+        setFilteredData(filteredSections);
+      }
     };
 
     filterData();
@@ -104,8 +230,8 @@ function MenuScreen() {
   // Render a menu item
   const renderItem = ({ item }: { item: MenuItem }) => (
     <View style={styles.menuItem}>
-      <ThemedText style={styles.menuItemTitle}>{item.title}</ThemedText>
-      <ThemedText style={styles.menuItemPrice}>${item.price}</ThemedText>
+      <Text style={styles.menuItemTitle}>{item.title}</Text>
+      <Text style={styles.menuItemPrice}>${item.price}</Text>
     </View>
   );
 
@@ -116,7 +242,7 @@ function MenuScreen() {
     section: { title: string };
   }) => (
     <View style={styles.sectionHeader}>
-      <ThemedText style={styles.sectionHeaderText}>{title}</ThemedText>
+      <Text style={styles.sectionHeaderText}>{title}</Text>
     </View>
   );
 
@@ -126,18 +252,13 @@ function MenuScreen() {
 
       {/* Header */}
       <View style={styles.header}>
-        <Image
-          source={require("@/assets/images/little-lemon-logo-grey.png")}
-          style={styles.logo}
-          resizeMode="contain"
-        />
-        <ThemedText style={styles.headerTitle}>Little Lemon</ThemedText>
+        <Text style={styles.headerTitle}>Little Lemon</Text>
       </View>
 
       {isLoading ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#F4CE14" />
-          <ThemedText style={styles.loadingText}>Loading menu...</ThemedText>
+          <Text style={styles.loadingText}>Loading menu...</Text>
         </View>
       ) : (
         <>
@@ -154,7 +275,7 @@ function MenuScreen() {
 
           {/* Category Filters */}
           <View style={styles.categoriesContainer}>
-            <ThemedText style={styles.categoriesTitle}>CATEGORIES</ThemedText>
+            <Text style={styles.categoriesTitle}>CATEGORIES</Text>
             <View style={styles.categoriesRow}>
               {categories.map((category) => (
                 <TouchableOpacity
@@ -205,13 +326,7 @@ const styles = StyleSheet.create({
   header: {
     backgroundColor: "#495E57",
     padding: 16,
-    flexDirection: "row",
     alignItems: "center",
-  },
-  logo: {
-    width: 50,
-    height: 50,
-    marginRight: 10,
   },
   headerTitle: {
     fontSize: 24,
@@ -302,5 +417,3 @@ const styles = StyleSheet.create({
     color: "#495E57", // Little Lemon green
   },
 });
-
-export default MenuScreen;
