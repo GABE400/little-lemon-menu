@@ -459,36 +459,124 @@ export default function App() {
           )}
 
           {/* Menu List */}
-          <SectionList
-            sections={filteredData}
-            keyExtractor={(item) => item.id}
-            renderItem={renderItem}
-            renderSectionHeader={renderSectionHeader}
-            stickySectionHeadersEnabled={true}
-            style={[
-              styles.sectionList,
-              isFiltering && styles.sectionListFiltering,
-            ]}
-            ListEmptyComponent={
-              <View style={styles.emptyListContainer}>
-                <Text style={styles.emptyListText}>No menu items found</Text>
-                <Text style={styles.emptyListSubText}>
-                  Try changing your search or filters
-                </Text>
-              </View>
-            }
-            ListHeaderComponent={
-              <View style={styles.listHeader}>
-                <Text style={styles.resultCount}>
-                  {filteredData.reduce(
-                    (count, section) => count + section.data.length,
-                    0
-                  )}{" "}
-                  items found
-                </Text>
-              </View>
-            }
-          />
+          <View style={{ flex: 1, backgroundColor: "#fff", marginTop: 10 }}>
+            <Text
+              style={{
+                padding: 10,
+                backgroundColor: "#333",
+                color: "#fff",
+                textAlign: "center",
+                fontWeight: "bold",
+              }}
+            >
+              MENU ITEMS (Using SectionList Component)
+            </Text>
+
+            <SectionList
+              sections={[
+                {
+                  title: "Appetizers",
+                  data: [
+                    {
+                      id: "1",
+                      title: "Spinach Artichoke Dip",
+                      price: "10.99",
+                      category: "Appetizers",
+                    },
+                    {
+                      id: "2",
+                      title: "Hummus",
+                      price: "8.99",
+                      category: "Appetizers",
+                    },
+                    {
+                      id: "3",
+                      title: "Fried Calamari Rings",
+                      price: "12.99",
+                      category: "Appetizers",
+                    },
+                    {
+                      id: "4",
+                      title: "Fried Mushroom",
+                      price: "9.99",
+                      category: "Appetizers",
+                    },
+                  ],
+                },
+                {
+                  title: "Salads",
+                  data: [
+                    {
+                      id: "5",
+                      title: "Greek Salad",
+                      price: "9.99",
+                      category: "Salads",
+                    },
+                    {
+                      id: "6",
+                      title: "Caesar Salad",
+                      price: "8.99",
+                      category: "Salads",
+                    },
+                    {
+                      id: "7",
+                      title: "Tuna Salad",
+                      price: "11.99",
+                      category: "Salads",
+                    },
+                    {
+                      id: "8",
+                      title: "Grilled Chicken Salad",
+                      price: "12.99",
+                      category: "Salads",
+                    },
+                  ],
+                },
+                {
+                  title: "Beverages",
+                  data: [
+                    {
+                      id: "9",
+                      title: "Water",
+                      price: "1.99",
+                      category: "Beverages",
+                    },
+                    {
+                      id: "10",
+                      title: "Coke",
+                      price: "2.99",
+                      category: "Beverages",
+                    },
+                    {
+                      id: "11",
+                      title: "Beer",
+                      price: "5.99",
+                      category: "Beverages",
+                    },
+                    {
+                      id: "12",
+                      title: "Ice Tea",
+                      price: "3.99",
+                      category: "Beverages",
+                    },
+                  ],
+                },
+              ]}
+              keyExtractor={(item) => item.id}
+              renderItem={renderItem}
+              renderSectionHeader={renderSectionHeader}
+              stickySectionHeadersEnabled={true}
+              style={[
+                styles.sectionList,
+                isFiltering && styles.sectionListFiltering,
+              ]}
+              ListHeaderComponent={
+                <View style={styles.listHeader}>
+                  <Text style={styles.resultCount}>12 items found</Text>
+                </View>
+              }
+            />
+          </View>
         </>
       )}
     </SafeAreaView>
@@ -704,6 +792,9 @@ const styles = StyleSheet.create({
   sectionList: {
     flex: 1,
     backgroundColor: "#fff",
+    minHeight: 300, // Ensure minimum height
+    borderWidth: 1, // Add border for debugging
+    borderColor: "#ddd",
   },
   sectionListFiltering: {
     opacity: 0.7,
