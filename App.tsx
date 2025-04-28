@@ -97,12 +97,18 @@ export default function App() {
   >({});
   const [categories, setCategories] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isFiltering, setIsFiltering] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [dataSource, setDataSource] = useState<"api" | "database" | "local">(
+    "api"
+  );
 
   // Initialize database and fetch data
   useEffect(() => {
     const initializeApp = async () => {
       try {
         setIsLoading(true);
+        setError(null);
 
         // Import database functions
         const {
@@ -115,22 +121,71 @@ export default function App() {
         const { fetchData } = require("./api");
 
         // Create the database table (will be skipped if SQLite is not available)
-        await createTable();
+        try {
+          await createTable();
+        } catch (dbError) {
+          console.error("Error creating database table:", dbError);
+          // Continue execution - we'll try API next
+        }
 
         // Try to fetch data from the API
         let menuItems = [];
         try {
+          // Show loading message for API
+          setIsLoading(true);
+          setError(null);
+
+          // Fetch data from API
           menuItems = await fetchData();
+          setDataSource("api");
+          console.log("Successfully fetched data from API");
 
           // Try to save to SQLite (will be skipped if SQLite is not available)
-          await saveMenuItems(menuItems);
+          try {
+            await saveMenuItems(menuItems);
+            console.log("Successfully saved data to database");
+          } catch (saveError) {
+            console.error("Error saving to database:", saveError);
+            // Continue execution - we already have data from API
+          }
         } catch (apiError) {
           console.error("Error fetching from API:", apiError);
-          // If API fetch fails, we'll rely on getMenuItems to provide fallback data
+
+          // Try to get data from database
+          try {
+            setIsLoading(true);
+            setError("Could not fetch from API. Trying database...");
+
+            const dbItems = await getMenuItems();
+
+            if (dbItems && dbItems.length > 0) {
+              menuItems = dbItems;
+              setDataSource("database");
+              console.log("Successfully retrieved data from database");
+              setError(null);
+            } else {
+              throw new Error("No data in database");
+            }
+          } catch (dbGetError) {
+            console.error("Error getting data from database:", dbGetError);
+
+            // Fallback to local data
+            setIsLoading(true);
+            setError(
+              "Could not fetch from API or database. Using local data..."
+            );
+
+            menuItems = MENU_ITEMS;
+            setDataSource("local");
+            console.log("Using local data as fallback");
+
+            // Clear error after 3 seconds
+            setTimeout(() => setError(null), 3000);
+          }
         }
 
-        // Get menu items (from SQLite if available, otherwise from local data)
-        const items = await getMenuItems();
+        // Process the menu items (from whichever source we got them)
+        const items = menuItems;
 
         // Extract unique categories
         const uniqueCategories = [
@@ -151,6 +206,7 @@ export default function App() {
         setFilteredData(sectionListData);
       } catch (error) {
         console.error("Error initializing app:", error);
+        setError("An unexpected error occurred. Using local data.");
 
         // Fallback to local data if everything else fails
         const uniqueCategories = [
@@ -167,6 +223,10 @@ export default function App() {
         const sectionListData = getSectionListData(MENU_ITEMS);
         setData(sectionListData);
         setFilteredData(sectionListData);
+        setDataSource("local");
+
+        // Clear error after 5 seconds
+        setTimeout(() => setError(null), 5000);
       } finally {
         setIsLoading(false);
       }
@@ -179,48 +239,81 @@ export default function App() {
   useEffect(() => {
     if (!data.length) return;
 
-    const filterData = async () => {
-      try {
-        // Import database functions
-        const { getMenuItems } = require("./database");
+    // Add a small delay to show loading state for better UX
+    const filterTimeout = setTimeout(() => {
+      const filterData = async () => {
+        try {
+          setIsFiltering(true);
 
-        // Get all menu items (from SQLite if available, otherwise from local data)
-        const allItems = await getMenuItems();
+          // Import database functions
+          const { getMenuItems } = require("./database");
 
-        // Filter items based on search text and selected categories
-        const filteredItems = allItems.filter((item) => {
-          const matchesSearch = item.title
-            .toLowerCase()
-            .includes(searchText.toLowerCase());
-          const categoryIsSelected = selectedCategories[item.category];
-          return matchesSearch && categoryIsSelected;
-        });
+          // Get all menu items (from SQLite if available, otherwise from local data)
+          const allItems = await getMenuItems();
 
-        // Transform filtered items into section list format
-        const filteredSections = getSectionListData(filteredItems);
-        setFilteredData(filteredSections);
-      } catch (error) {
-        console.error("Error filtering data:", error);
+          // Filter items based on search text and selected categories
+          const filteredItems = allItems.filter((item) => {
+            const matchesSearch = item.title
+              .toLowerCase()
+              .includes(searchText.toLowerCase());
+            const categoryIsSelected = selectedCategories[item.category];
+            return matchesSearch && categoryIsSelected;
+          });
 
-        // Fallback to filtering local data if everything else fails
-        const filteredItems = MENU_ITEMS.filter((item) => {
-          const matchesSearch = item.title
-            .toLowerCase()
-            .includes(searchText.toLowerCase());
-          const categoryIsSelected = selectedCategories[item.category];
-          return matchesSearch && categoryIsSelected;
-        });
+          // Transform filtered items into section list format
+          const filteredSections = getSectionListData(filteredItems);
+          setFilteredData(filteredSections);
+        } catch (error) {
+          console.error("Error filtering data:", error);
 
-        const filteredSections = getSectionListData(filteredItems);
-        setFilteredData(filteredSections);
-      }
-    };
+          // Fallback to filtering local data if everything else fails
+          const filteredItems = MENU_ITEMS.filter((item) => {
+            const matchesSearch = item.title
+              .toLowerCase()
+              .includes(searchText.toLowerCase());
+            const categoryIsSelected = selectedCategories[item.category];
+            return matchesSearch && categoryIsSelected;
+          });
 
-    filterData();
+          const filteredSections = getSectionListData(filteredItems);
+          setFilteredData(filteredSections);
+        } finally {
+          setIsFiltering(false);
+        }
+      };
+
+      filterData();
+    }, 300); // 300ms delay for better UX
+
+    // Cleanup function to clear the timeout if the component unmounts or dependencies change
+    return () => clearTimeout(filterTimeout);
   }, [searchText, selectedCategories, data]);
+
+  // Get icon for category
+  const getCategoryIcon = (category: string): string => {
+    switch (category) {
+      case "Appetizers":
+        return "🍲";
+      case "Salads":
+        return "🥗";
+      case "Beverages":
+        return "🥤";
+      default:
+        return "🍽️";
+    }
+  };
 
   // Toggle category selection
   const toggleCategory = (category: string) => {
+    // Add haptic feedback if available
+    if (
+      typeof window !== "undefined" &&
+      "navigator" in window &&
+      "vibrate" in navigator
+    ) {
+      navigator.vibrate(50); // Short vibration for feedback
+    }
+
     setSelectedCategories((prev) => ({
       ...prev,
       [category]: !prev[category],
@@ -229,10 +322,21 @@ export default function App() {
 
   // Render a menu item
   const renderItem = ({ item }: { item: MenuItem }) => (
-    <View style={styles.menuItem}>
-      <Text style={styles.menuItemTitle}>{item.title}</Text>
-      <Text style={styles.menuItemPrice}>${item.price}</Text>
-    </View>
+    <TouchableOpacity
+      style={styles.menuItem}
+      activeOpacity={0.7}
+      onPress={() => {
+        // In a real app, this would navigate to a detail screen
+        alert(`You selected ${item.title}`);
+      }}
+    >
+      <View style={styles.menuItemContent}>
+        <Text style={styles.menuItemTitle}>{item.title}</Text>
+        <View style={styles.menuItemPriceContainer}>
+          <Text style={styles.menuItemPrice}>${item.price}</Text>
+        </View>
+      </View>
+    </TouchableOpacity>
   );
 
   // Render a section header
@@ -242,7 +346,10 @@ export default function App() {
     section: { title: string };
   }) => (
     <View style={styles.sectionHeader}>
-      <Text style={styles.sectionHeaderText}>{title}</Text>
+      <Text style={styles.sectionHeaderText}>
+        {getCategoryIcon(title)} {title}
+      </Text>
+      <View style={styles.sectionHeaderLine} />
     </View>
   );
 
@@ -255,6 +362,27 @@ export default function App() {
         <Text style={styles.headerTitle}>Little Lemon</Text>
       </View>
 
+      {/* Error Message */}
+      {error && (
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorText}>{error}</Text>
+        </View>
+      )}
+
+      {/* Data Source Indicator */}
+      {!isLoading && (
+        <View style={styles.dataSourceContainer}>
+          <Text style={styles.dataSourceText}>
+            Data source:{" "}
+            {dataSource === "api"
+              ? "Server API"
+              : dataSource === "database"
+              ? "Local Database"
+              : "Local Fallback"}
+          </Text>
+        </View>
+      )}
+
       {isLoading ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#F4CE14" />
@@ -264,13 +392,32 @@ export default function App() {
         <>
           {/* Search Bar */}
           <View style={styles.searchContainer}>
-            <TextInput
-              style={styles.searchInput}
-              placeholder="Search menu items..."
-              value={searchText}
-              onChangeText={setSearchText}
-              placeholderTextColor="#888"
-            />
+            <View style={styles.searchInputContainer}>
+              <Text style={styles.searchIcon}>🔍</Text>
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Search menu items..."
+                value={searchText}
+                onChangeText={setSearchText}
+                placeholderTextColor="#888"
+                returnKeyType="search"
+                clearButtonMode="while-editing"
+              />
+              {searchText.length > 0 && (
+                <TouchableOpacity
+                  style={styles.clearButton}
+                  onPress={() => setSearchText("")}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.clearButtonText}>✕</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            {searchText.length > 0 && (
+              <Text style={styles.searchResultsText}>
+                Showing results for "{searchText}"
+              </Text>
+            )}
           </View>
 
           {/* Category Filters */}
@@ -296,12 +443,20 @@ export default function App() {
                         : {},
                     ]}
                   >
-                    {category}
+                    {getCategoryIcon(category)} {category}
                   </Text>
                 </TouchableOpacity>
               ))}
             </View>
           </View>
+
+          {/* Filtering Indicator */}
+          {isFiltering && (
+            <View style={styles.filteringContainer}>
+              <ActivityIndicator size="small" color="#F4CE14" />
+              <Text style={styles.filteringText}>Updating results...</Text>
+            </View>
+          )}
 
           {/* Menu List */}
           <SectionList
@@ -310,7 +465,29 @@ export default function App() {
             renderItem={renderItem}
             renderSectionHeader={renderSectionHeader}
             stickySectionHeadersEnabled={true}
-            style={styles.sectionList}
+            style={[
+              styles.sectionList,
+              isFiltering && styles.sectionListFiltering,
+            ]}
+            ListEmptyComponent={
+              <View style={styles.emptyListContainer}>
+                <Text style={styles.emptyListText}>No menu items found</Text>
+                <Text style={styles.emptyListSubText}>
+                  Try changing your search or filters
+                </Text>
+              </View>
+            }
+            ListHeaderComponent={
+              <View style={styles.listHeader}>
+                <Text style={styles.resultCount}>
+                  {filteredData.reduce(
+                    (count, section) => count + section.data.length,
+                    0
+                  )}{" "}
+                  items found
+                </Text>
+              </View>
+            }
           />
         </>
       )}
@@ -333,6 +510,38 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     color: "#F4CE14", // Little Lemon yellow
   },
+  // Error message styles
+  errorContainer: {
+    backgroundColor: "#FF8A80", // Light red background
+    padding: 10,
+    marginHorizontal: 16,
+    marginTop: 8,
+    borderRadius: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  errorText: {
+    color: "#C41C00", // Dark red text
+    fontSize: 14,
+    fontWeight: "bold",
+    textAlign: "center",
+  },
+  // Data source indicator styles
+  dataSourceContainer: {
+    backgroundColor: "#81C784", // Light green background
+    padding: 6,
+    marginHorizontal: 16,
+    marginTop: 8,
+    borderRadius: 8,
+    alignItems: "center",
+  },
+  dataSourceText: {
+    color: "#2E7D32", // Dark green text
+    fontSize: 12,
+    fontWeight: "bold",
+  },
+  // Loading styles
   loadingContainer: {
     flex: 1,
     justifyContent: "center",
@@ -343,73 +552,218 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: "#fff",
   },
+  // Empty list styles
+  emptyListContainer: {
+    flex: 1,
+    padding: 20,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#fff",
+  },
+  emptyListText: {
+    fontSize: 18,
+    fontWeight: "bold",
+    color: "#333",
+    marginBottom: 8,
+  },
+  emptyListSubText: {
+    fontSize: 14,
+    color: "#666",
+    textAlign: "center",
+  },
   searchContainer: {
     padding: 16,
+    paddingTop: 8,
     backgroundColor: "#495E57",
   },
-  searchInput: {
+  searchInputContainer: {
+    flexDirection: "row",
+    alignItems: "center",
     backgroundColor: "#fff",
-    padding: 10,
-    borderRadius: 8,
+    borderRadius: 10,
+    elevation: 4,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.23,
+    shadowRadius: 2.62,
+    borderWidth: 1,
+    borderColor: "#E0E0E0",
+    paddingHorizontal: 12,
+  },
+  searchIcon: {
     fontSize: 16,
+    marginRight: 8,
+    color: "#666",
+  },
+  searchInput: {
+    flex: 1,
+    padding: 12,
+    fontSize: 16,
+    color: "#333",
+  },
+  clearButton: {
+    padding: 6,
+    borderRadius: 15,
+    backgroundColor: "#EEEEEE",
+    justifyContent: "center",
+    alignItems: "center",
+    width: 24,
+    height: 24,
+  },
+  clearButtonText: {
+    fontSize: 12,
+    color: "#666",
+    fontWeight: "bold",
+  },
+  searchResultsText: {
+    color: "#EEEEEE",
+    fontSize: 12,
+    marginTop: 8,
+    marginLeft: 4,
+    fontStyle: "italic",
   },
   categoriesContainer: {
     padding: 16,
+    paddingTop: 8,
     backgroundColor: "#495E57",
   },
   categoriesTitle: {
     fontSize: 16,
     fontWeight: "bold",
-    marginBottom: 8,
+    marginBottom: 12,
     color: "#fff",
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
   },
   categoriesRow: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 8,
+    gap: 10,
+    justifyContent: "center",
+    marginBottom: 8,
   },
   categoryButton: {
-    paddingVertical: 6,
-    paddingHorizontal: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
     borderRadius: 20,
     backgroundColor: "#3A474E",
-    marginRight: 8,
-    marginBottom: 8,
+    marginRight: 10,
+    marginBottom: 10,
+    elevation: 3,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.22,
+    shadowRadius: 2.22,
+    borderWidth: 1,
+    borderColor: "transparent",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    minWidth: 90,
   },
   categoryButtonSelected: {
     backgroundColor: "#F4CE14",
+    borderColor: "#E4AE04",
+    shadowColor: "#E4AE04",
+    shadowOpacity: 0.4,
+    transform: [{ scale: 1.05 }],
   },
   categoryButtonText: {
     color: "#fff",
     fontSize: 14,
+    fontWeight: "600",
+    textAlign: "center",
   },
   categoryButtonTextSelected: {
     color: "#333",
+    fontWeight: "bold",
+  },
+  filteringContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(73, 94, 87, 0.9)",
+    padding: 8,
+    borderRadius: 20,
+    position: "absolute",
+    top: 10,
+    alignSelf: "center",
+    zIndex: 10,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+  },
+  filteringText: {
+    color: "#fff",
+    marginLeft: 8,
+    fontSize: 14,
+    fontWeight: "500",
   },
   sectionList: {
     flex: 1,
     backgroundColor: "#fff",
   },
+  sectionListFiltering: {
+    opacity: 0.7,
+  },
+  listHeader: {
+    padding: 10,
+    backgroundColor: "#F5F5F5",
+    borderBottomWidth: 1,
+    borderBottomColor: "#E0E0E0",
+  },
+  resultCount: {
+    fontSize: 14,
+    color: "#666",
+    fontStyle: "italic",
+    textAlign: "center",
+  },
   sectionHeader: {
     backgroundColor: "#F4CE14", // Little Lemon yellow
-    padding: 10,
+    padding: 12,
+    paddingHorizontal: 16,
+    borderTopWidth: 1,
+    borderTopColor: "#E4AE04",
   },
   sectionHeaderText: {
     fontSize: 18,
     fontWeight: "bold",
     color: "#333",
+    letterSpacing: 0.5,
+  },
+  sectionHeaderLine: {
+    height: 2,
+    backgroundColor: "#E4AE04",
+    marginTop: 8,
+    width: "30%",
+    borderRadius: 1,
   },
   menuItem: {
-    flexDirection: "row",
-    justifyContent: "space-between",
     padding: 16,
     borderBottomWidth: 1,
     borderBottomColor: "#eee",
     backgroundColor: "#fff",
   },
+  menuItemContent: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
   menuItemTitle: {
     fontSize: 16,
     color: "#333",
+    flex: 1,
+    fontWeight: "500",
+  },
+  menuItemPriceContainer: {
+    backgroundColor: "#EEFBF2",
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#D0EFD8",
   },
   menuItemPrice: {
     fontSize: 16,
